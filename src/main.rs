@@ -32,6 +32,10 @@ struct Gpu {
 }
 
 fn main() {
+    print!("\x1b[?25l");
+    io::stdout().flush().ok();
+    restore_cursor_on_exit();
+
     let mut per_gpu: Vec<Vec<f64>> = Vec::new();
     let mut tick = 0u64;
 
@@ -55,16 +59,42 @@ fn main() {
     }
 }
 
+// Re-show the cursor (we hid it above) when the program is killed with
+// Ctrl-C, otherwise the user's shell would be left with an invisible cursor.
+// The handler only uses async-signal-safe calls, so it is safe to run inside
+// a signal handler.
+#[cfg(unix)]
+fn restore_cursor_on_exit() {
+    unsafe extern "C" {
+        fn signal(signum: i32, handler: usize) -> usize;
+        fn write(fd: i32, buf: *const u8, count: usize) -> isize;
+        fn _exit(status: i32) -> !;
+    }
+    const SIGINT: i32 = 2;
+    const STDOUT: i32 = 1;
+
+    unsafe extern "C" fn on_sigint(_sig: i32) {
+        let s: &[u8] = b"\x1b[?25h";
+        unsafe {
+            write(STDOUT, s.as_ptr(), s.len());
+            _exit(130);
+        }
+    }
+
+    unsafe {
+        signal(SIGINT, on_sigint as *const () as usize);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_cursor_on_exit() {}
+
 fn push(v: &mut Vec<f64>, x: f64) {
     // keep the history from getting out of hand
     v.push(x);
     if v.len() > HIST {
         v.remove(0);
     }
-}
-
-fn sgr(code: &str, s: &str) -> String {
-    format!("\x1b[{code}m{s}\x1b[0m")
 }
 
 fn rgb(r: u8, g: u8, b: u8, s: &str) -> String {
